@@ -6,27 +6,23 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="format-detection" content="telephone=no">
-  <title>CardVault — Mobile</title>
+  <title>CardVault — Mobile (Diagnostics)</title>
   <meta name="theme-color" content="#0f172a">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon-192.png">
   <style>
     :root{
-      --bg:#0b1020; --surface:#0f172a; --surface-2:#111827;
-      --text:#e5e7eb; --muted:#94a3b8; --accent:#22d3ee; --accent-2:#a78bfa; --danger:#ef4444;
+      --bg:#0b1020; --text:#e5e7eb; --muted:#94a3b8; --accent:#22d3ee; --accent-2:#a78bfa; --danger:#ef4444;
       --radius:16px; --safe-bottom: env(safe-area-inset-bottom);
     }
     *{box-sizing:border-box}
-    html, body { height: 100%; }
-    body{
-      margin:0; font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Arial; color:var(--text);
+    body{ margin:0; font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Arial; color:var(--text);
       background:
         radial-gradient(1000px 700px at 100% -5%, rgba(34,211,238,.08), transparent 60%),
         radial-gradient(900px 600px at -10% 100%, rgba(167,139,250,.08), transparent 60%),
         var(--bg);
-      -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-    }
+      -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+      touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     header{ position:sticky; top:0; z-index:50; backdrop-filter: blur(10px); background: rgba(11,16,32,.7);
       border-bottom: 1px solid rgba(148,163,184,.15); }
     .wrap{max-width:820px; margin:0 auto; padding:12px 14px;}
@@ -84,12 +80,19 @@
     summary{cursor:pointer}
     .hint{font-size:12px; color:#cbd5e1}
     .error{color:#fecaca}
+    .diag{position:fixed; right:12px; bottom:calc(70px + var(--safe-bottom)); z-index:70}
+    .panel{position:fixed; inset:auto 8px calc(90px + var(--safe-bottom)) 8px; background:rgba(2,6,23,.98);
+           border:1px solid rgba(148,163,184,.25); border-radius:12px; padding:10px; display:none}
+    .panel pre{max-height:30svh; overflow:auto; white-space:pre-wrap; font-size:12px; background:#0b1020; padding:8px; border-radius:8px}
+    .modal{position:fixed; inset:0; background:rgba(0,0,0,.65); display:none; z-index:80; align-items:center; justify-content:center; padding:16px}
+    .modal .box{background:#0b1020; border:1px solid rgba(148,163,184,.25); border-radius:12px; padding:14px; width:min(680px, 96vw)}
+    .modal textarea{width:100%; min-height:140px}
   </style>
 </head>
 <body>
   <header>
     <div class="wrap">
-      <h1>CardVault <span class="badge">Mobile</span></h1>
+      <h1>CardVault <span class="badge">Diagnostics</span></h1>
       <div class="search" style="margin-top:10px">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M21 21l-3.5-3.5m1.5-5.5a7 7 0 11-14 0 7 7 0 0114 0z" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"/>
@@ -171,6 +174,11 @@
         <div id="ocrOut" class="ocrtext">(empty)</div>
         <div class="hint" id="ocrHint" style="margin-top:6px"></div>
       </div>
+
+      <div class="row" style="margin-top:10px; justify-content:space-between">
+        <button class="btn small" id="btnPaste">📝 Paste Text Instead</button>
+        <button class="btn small" id="btnDiag">⚙️ Debug</button>
+      </div>
     </section>
 
     <section style="margin-top:16px">
@@ -196,12 +204,61 @@
 
   <div class="toast" id="toast">Saved</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <div class="diag">
+    <div class="panel" id="panel">
+      <h3 style="margin:0 0 6px 0">Diagnostics</h3>
+      <div class="hint" id="diagInfo"></div>
+      <pre id="diagLog"></pre>
+      <div class="row"><button class="btn small" id="btnCloseDiag">Close</button></div>
+    </div>
+  </div>
+
+  <div class="modal" id="pasteModal">
+    <div class="box">
+      <h3 style="margin:0 0 8px 0">Paste Recognized Text</h3>
+      <p class="hint">Tip: On iPhone, long‑press your photo → <b>Show Text</b> → Copy → Paste here.</p>
+      <textarea id="pasteArea" placeholder="Paste text here…"></textarea>
+      <div class="row" style="margin-top:8px; justify-content:flex-end">
+        <button class="btn" id="btnCancelPaste">Cancel</button>
+        <button class="btn primary" id="btnUsePaste">Use & Auto‑Fill</button>
+      </div>
+    </div>
+  </div>
+
   <script>
+    const Diag = (()=>{
+      const logEl = document.getElementById('diagLog');
+      const infoEl = document.getElementById('diagInfo');
+      const panel = document.getElementById('panel');
+      const lines = [];
+      function log(...args){ const s = args.map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' '); lines.push(s); if(logEl){ logEl.textContent = lines.join('\n'); } }
+      function info(){ const data = { ua: navigator.userAgent, online: navigator.onLine, sw: 'serviceWorker' in navigator, width: window.innerWidth, height: window.innerHeight, time: new Date().toISOString() }; infoEl.textContent = JSON.stringify(data, null, 2); }
+      function show(){ panel.style.display='block'; info(); }
+      function hide(){ panel.style.display='none'; }
+      return { log, show, hide, info };
+    })();
+    document.getElementById('btnDiag').addEventListener('click', Diag.show);
+    document.getElementById('btnCloseDiag').addEventListener('click', Diag.hide);
+
     const $ = (sel) => document.querySelector(sel);
     const byId = id => document.getElementById(id);
     const toast = (msg) => { const t = byId('toast'); t.textContent = msg; t.style.display='block'; setTimeout(()=>t.style.display='none', 1600); };
     const setHint = (msg, isError=false) => { const h = byId('ocrHint'); h.textContent = msg||''; h.className = isError ? 'hint error' : 'hint'; };
+
+    function loadScript(src){ return new Promise((res, rej)=>{ const s = document.createElement('script'); s.src = src; s.async = true; s.onload = res; s.onerror = ()=>rej(new Error('Failed: '+src)); document.head.appendChild(s); }); }
+    async function ensureTesseract(){
+      if(window.Tesseract && window.Tesseract.createWorker) return true;
+      const local = './vendor/tesseract.min.js';
+      const cdn = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+      try{ Diag.log('Loading local Tesseract…', local); await loadScript(local); }catch(e){ Diag.log('Local load failed', String(e)); }
+      if(window.Tesseract && window.Tesseract.createWorker) return true;
+      try{
+        Diag.log('Loading CDN Tesseract…', cdn);
+        const timeout = new Promise((_, rej)=>setTimeout(()=>rej(new Error('CDN timeout')), 12000));
+        await Promise.race([loadScript(cdn), timeout]);
+      }catch(e){ Diag.log('CDN load failed', String(e)); }
+      return !!(window.Tesseract && window.Tesseract.createWorker);
+    }
 
     const compressImage = (file, maxEdge=1600, quality=.85) => new Promise((res, rej)=>{
       const img = new Image();
@@ -210,7 +267,7 @@
         const scale = Math.min(1, maxEdge / Math.max(w0, h0));
         const w = Math.round(w0 * scale), h = Math.round(h0 * scale);
         const c = document.createElement('canvas'); c.width=w; c.height=h;
-        const ctx = c.getContext('2d'); ctx.drawImage(img,0,0,w,h);
+        c.getContext('2d').drawImage(img,0,0,w,h);
         res(c.toDataURL('image/jpeg', quality));
       };
       img.onerror = rej;
@@ -219,49 +276,36 @@
       reader.readAsDataURL(file);
     });
 
-    const store = {
-      key: 'cv_cards_v3',
-      all(){ try { return JSON.parse(localStorage.getItem(this.key) || '[]'); } catch(e){ return [] } },
-      save(cards){ localStorage.setItem(this.key, JSON.stringify(cards)); },
-      add(card){ const cards = this.all(); cards.unshift(card); this.save(cards); return cards; },
-      wipe(){ localStorage.removeItem(this.key); }
-    };
+    const store = { key:'cv_cards_diag_v1', all(){ try { return JSON.parse(localStorage.getItem(this.key)||'[]'); }catch(e){ return [] } },
+      save(v){ localStorage.setItem(this.key, JSON.stringify(v)); },
+      add(card){ const a=this.all(); a.unshift(card); this.save(a); return a; }, wipe(){ localStorage.removeItem(this.key); } };
 
     const state = { frontDataURL:null, backDataURL:null, ocrFront:'', ocrBack:'',
       ocrAll(){ return [this.ocrFront, this.ocrBack].filter(Boolean).join('\n'); } };
 
-    const progressWrap = byId('progressWrap');
-    const progressBar = byId('progressBar');
-    const progressMsg = byId('progressMsg');
-
-    async function recognizeDataURL(dataURL, worker){
-      const res = await worker.recognize(dataURL);
-      return (res && res.data && res.data.text) ? res.data.text : '';
-    }
-
     async function runOCR(){
       if(!state.frontDataURL && !state.backDataURL){ toast('Add at least the front image'); return; }
       byId('ocrOut').textContent = '(processing…)';
-      setHint('First run needs internet to fetch OCR engine.');
-      progressWrap.style.display = 'block'; progressBar.style.width = '0%'; progressMsg.textContent = 'Initializing…';
+      setHint('Trying local engine → CDN. If this hangs, tap Debug.', false);
+      const ok = await ensureTesseract();
+      if(!ok){ setHint('Could not load OCR engine. Try Paste Text Instead (uses iOS Live Text).', true); return; }
+
+      const progressWrap = byId('progressWrap'); const progressBar = byId('progressBar'); const progressMsg = byId('progressMsg');
+      progressWrap.style.display='block'; progressBar.style.width='0%'; progressMsg.textContent='Initializing…';
 
       let worker;
       try{
-        worker = await Tesseract.createWorker({ logger: m => {
-          if(m.status && m.progress!=null){
-            progressMsg.textContent = m.status.replace(/_/g,' ') + '…';
-            progressBar.style.width = Math.round(m.progress*100) + '%';
-          }
-        }});
+        worker = await window.Tesseract.createWorker({ logger: m => {
+          if(m.status && typeof m.progress === 'number'){ progressMsg.textContent = m.status.replace(/_/g,' ')+'…'; progressBar.style.width = Math.round(m.progress*100)+'%'; }
+          Diag.log('OCR:', JSON.stringify(m));
+        }, langPath: './tessdata' });
         await worker.loadLanguage('eng');
         await worker.initialize('eng');
-
-        state.ocrFront = state.frontDataURL ? await recognizeDataURL(state.frontDataURL, worker) : '';
-        state.ocrBack  = state.backDataURL  ? await recognizeDataURL(state.backDataURL, worker) : '';
-      } catch(e){
-        console.error(e);
-        setHint('OCR failed to load. Check internet on first run or content blockers.', true);
-        toast('OCR failed');
+        if(state.frontDataURL){ const r1 = await worker.recognize(state.frontDataURL); state.ocrFront = (r1?.data?.text)||''; }
+        if(state.backDataURL){ const r2 = await worker.recognize(state.backDataURL); state.ocrBack = (r2?.data?.text)||''; }
+      } catch(err){
+        Diag.log('OCR error', String(err));
+        setHint('OCR error. Try Paste Text Instead or check Debug for details.', true);
       } finally{
         try{ await worker.terminate(); }catch(_){}
       }
@@ -270,30 +314,8 @@
       byId('ocrOut').textContent = text || '(no text found)';
       autoFillFromText(text);
       byId('btnSave').disabled = text.length === 0;
-      progressWrap.style.display = 'none';
-      setHint(text ? 'Tap Save to store the card. Edit any field before saving.' : '');
-    }
-
-    function autoFillFromText(text){
-      const fields = extractFields(text);
-      if(!byId('name').value && fields.name) byId('name').value = fields.name;
-      if(!byId('company').value && fields.company) byId('company').value = fields.company;
-      if(!byId('email').value && fields.email) byId('email').value = fields.email;
-      if(!byId('phone').value && fields.phone) byId('phone').value = fields.phone;
-      if(!byId('website').value && fields.website) byId('website').value = fields.website;
-      if(!byId('title').value){
-        const t = [fields.name, fields.company].filter(Boolean).join(' — ');
-        byId('title').value = t || suggestTitle(text);
-      }
-    }
-
-    function suggestTitle(txt){
-      const lines = (txt||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-      const drop = /\b(email|mail|phone|tel|mobile|mob|www|http|fax|address|add\.?|street|road|rd\.|st\.)\b/i;
-      for(const l of lines){
-        if(l.length >= 3 && !drop.test(l)) return l.slice(0,64);
-      }
-      return 'New Contact';
+      progressWrap.style.display='none';
+      setHint(text ? 'Fields auto-filled. Edit if needed, then Save.' : '');
     }
 
     function extractFields(text){
@@ -307,16 +329,24 @@
       const company = candidates[1] && candidates[1] !== name ? candidates[1] : '';
       return {email, phone, website, name, company};
     }
+    function autoFillFromText(text){
+      const f = extractFields(text);
+      if(!byId('name').value && f.name) byId('name').value = f.name;
+      if(!byId('company').value && f.company) byId('company').value = f.company;
+      if(!byId('email').value && f.email) byId('email').value = f.email;
+      if(!byId('phone').value && f.phone) byId('phone').value = f.phone;
+      if(!byId('website').value && f.website) byId('website').value = f.website;
+      if(!byId('title').value){ byId('title').value = [f.name, f.company].filter(Boolean).join(' — ') || 'New Contact'; }
+    }
 
+    function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
     function renderList(q=''){
       const list = byId('list');
       const cards = store.all();
       const needle = q.trim().toLowerCase();
       const filtered = !needle ? cards : cards.filter(c => (c.title + ' ' + c.text + ' ' + c.notes + ' ' + (c.tags||[]).join(' ')).toLowerCase().includes(needle));
       list.innerHTML = '';
-      if(filtered.length === 0){
-        const p = document.createElement('p'); p.className='muted'; p.textContent = 'No cards yet.'; list.appendChild(p); return;
-      }
+      if(filtered.length === 0){ const p = document.createElement('p'); p.className='muted'; p.textContent='No cards yet.'; list.appendChild(p); return; }
       for(const c of filtered){
         const div = document.createElement('div'); div.className='item';
         div.innerHTML = `
@@ -335,124 +365,73 @@
       }
     }
 
-    function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-
     function vcardFor(card){
       const safe = s => (s||'').replace(/\n/g,'\\n').replace(/,/g,'\,');
-      const v = [
-        'BEGIN:VCARD','VERSION:3.0',
-        'N:;'+safe(card.name||'')+';;;',
-        'FN:'+safe(card.title || card.name || ''),
-        card.company ? ('ORG:'+safe(card.company)) : null,
-        card.phone ? ('TEL;TYPE=CELL:'+card.phone) : null,
-        card.email ? ('EMAIL;TYPE=INTERNET:'+card.email) : null,
-        card.website ? ('URL:'+safe(card.website)) : null,
-        card.notes ? ('NOTE:'+safe(card.notes)) : null,
-        'END:VCARD'
-      ].filter(Boolean).join('\n');
-      const blob = new Blob([v], {type:'text/vcard'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = (card.title||'contact') + '.vcf'; a.click();
-      setTimeout(()=>URL.revokeObjectURL(url), 1500);
+      const v = ['BEGIN:VCARD','VERSION:3.0','N:;'+safe(card.name||'')+';;;','FN:'+safe(card.title || card.name || ''),
+        card.company?('ORG:'+safe(card.company)):null, card.phone?('TEL;TYPE=CELL:'+card.phone):null, card.email?('EMAIL;TYPE=INTERNET:'+card.email):null,
+        card.website?('URL:'+safe(card.website)):null, card.notes?('NOTE:'+safe(card.notes)):null,'END:VCARD'].filter(Boolean).join('\n');
+      const blob = new Blob([v], {type:'text/vcard'}); const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=(card.title||'contact')+'.vcf'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1500);
     }
 
-    byId('frontFile').addEventListener('change', async (e)=>{
-      if(!e.target.files[0]) return;
-      const dataURL = await compressImage(e.target.files[0], 1600, .85);
-      state.frontDataURL = dataURL; byId('frontThumb').innerHTML = '<img alt="front" src="'+dataURL+'">';
-      byId('btnSave').disabled = true;
-    });
-    byId('backFile').addEventListener('change', async (e)=>{
-      if(!e.target.files[0]) return;
-      const dataURL = await compressImage(e.target.files[0], 1600, .85);
-      state.backDataURL = dataURL; byId('backThumb').innerHTML = '<img alt="back" src="'+dataURL+'">';
-      byId('btnSave').disabled = true;
-    });
+    byId('frontFile').addEventListener('change', async (e)=>{ if(!e.target.files[0]) return; const dataURL=await compressImage(e.target.files[0]); state.frontDataURL=dataURL; byId('frontThumb').innerHTML='<img alt="front" src="'+dataURL+'">'; byId('btnSave').disabled=true; });
+    byId('backFile').addEventListener('change', async (e)=>{ if(!e.target.files[0]) return; const dataURL=await compressImage(e.target.files[0]); state.backDataURL=dataURL; byId('backThumb').innerHTML='<img alt="back" src="'+dataURL+'">'; byId('btnSave').disabled=true; });
     byId('btnOcr').addEventListener('click', runOCR);
     byId('btnReset').addEventListener('click', ()=>{
       state.frontDataURL=null; state.backDataURL=null; state.ocrFront=''; state.ocrBack='';
-      byId('frontThumb').innerHTML='<span class="muted">Front</span>';
-      byId('backThumb').innerHTML='<span class="muted">Back</span>';
+      byId('frontThumb').innerHTML='<span class="muted">Front</span>'; byId('backThumb').innerHTML='<span class="muted">Back</span>';
       byId('ocrOut').textContent='(empty)'; setHint('');
       ['name','company','email','phone','website','title','tags','notes'].forEach(id => byId(id).value='');
-      byId('btnSave').disabled = true;
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      byId('btnSave').disabled = true; window.scrollTo({ top: 0, behavior: 'smooth' });
     });
     byId('btnSave').addEventListener('click', ()=>{
-      const card = {
-        id: crypto.randomUUID(),
-        title: byId('title').value || 'New Contact',
-        name: byId('name').value || '',
-        company: byId('company').value || '',
-        email: byId('email').value || '',
-        phone: byId('phone').value || '',
-        website: byId('website').value || '',
-        front: state.frontDataURL, back: state.backDataURL,
-        text: state.ocrAll(),
-        notes: byId('notes').value || '',
-        tags: (byId('tags').value||'').split(',').map(s=>s.trim()).filter(Boolean),
-        createdAt: new Date().toISOString()
-      };
-      store.add(card); renderList(byId('q').value); toast('Saved');
-      byId('btnReset').click();
+      const card = { id: crypto.randomUUID(), title: byId('title').value || 'New Contact',
+        name:byId('name').value||'', company:byId('company').value||'', email:byId('email').value||'',
+        phone:byId('phone').value||'', website:byId('website').value||'',
+        front: state.frontDataURL, back: state.backDataURL, text: state.ocrAll(), notes: byId('notes').value || '',
+        tags:(byId('tags').value||'').split(',').map(s=>s.trim()).filter(Boolean), createdAt:new Date().toISOString() };
+      store.add(card); renderList(byId('q').value); toast('Saved'); byId('btnReset').click();
     });
-
-    byId('btnExport').addEventListener('click', ()=>{
-      const blob = new Blob([JSON.stringify(store.all(), null, 2)], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href=url; a.download='cardvault-export.json'; a.click();
-      setTimeout(()=>URL.revokeObjectURL(url), 1500);
-    });
+    byId('btnExport').addEventListener('click', ()=>{ const blob=new Blob([JSON.stringify(store.all(),null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='cardvault-export.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1500); });
     byId('btnCsv').addEventListener('click', ()=>{
-      const cards = store.all();
-      const rows = [['title','name','company','email','phone','website','notes','tags','createdAt','text']];
-      for (const c of cards){
-        rows.push([c.title,c.name||'',c.company||'',c.email||'',c.phone||'',c.website||'',
-          (c.notes||'').replace(/\n/g,' '),(c.tags||[]).join(';'),c.createdAt,(c.text||'').replace(/\n/g,' ')]);
-      }
-      const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-      const blob = new Blob([csv], {type:'text/csv'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href=url; a.download='cardvault-export.csv'; a.click();
-      setTimeout(()=>URL.revokeObjectURL(url), 1500);
+      const cards=store.all(); const rows=[['title','name','company','email','phone','website','notes','tags','createdAt','text']];
+      for(const c of cards){ rows.push([c.title,c.name||'',c.company||'',c.email||'',c.phone||'',c.website||'',(c.notes||'').replace(/\n/g,' '),(c.tags||[]).join(';'),c.createdAt,(c.text||'').replace(/\n/g,' ')]); }
+      const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n'); const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='cardvault-export.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1500);
     });
-
     byId('list').addEventListener('click', (e)=>{
-      const btn = e.target.closest('button'); if(!btn) return;
-      const id = btn.getAttribute('data-id'); const act = btn.getAttribute('data-act');
-      const cards = store.all(); const idx = cards.findIndex(c=>c.id===id); if(idx<0) return;
+      const btn=e.target.closest('button'); if(!btn) return;
+      const id=btn.getAttribute('data-id'); const act=btn.getAttribute('data-act');
+      const cards=store.all(); const idx=cards.findIndex(c=>c.id===id); if(idx<0) return;
       if(act==='del'){ if(confirm('Delete this card?')){ cards.splice(idx,1); store.save(cards); renderList(byId('q').value); toast('Deleted'); } }
-      else if(act==='vcard'){ vcardFor(cards[idx]); }
-      else if(act==='open'){ openViewer(cards[idx]); }
+      else if(act==='vcard'){ vcardFor(cards[idx]); } else if(act==='open'){ openViewer(cards[idx]); }
     });
-
-    let searchTimer = null;
-    byId('q').addEventListener('input', (e)=>{ clearTimeout(searchTimer); searchTimer = setTimeout(()=>renderList(e.target.value), 120); });
+    let searchTimer=null; byId('q').addEventListener('input',(e)=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>renderList(e.target.value), 120); });
 
     function openViewer(card){
-      const list = byId('list');
-      const container = Array.from(list.children).find(el => el.querySelector(`[data-id="${card.id}"]`));
-      if(!container) return;
-      let details = container.querySelector('details');
-      if(details){ details.open = !details.open; return; }
-      details = document.createElement('details'); details.open = true;
+      const list=byId('list');
+      const container=Array.from(list.children).find(el=>el.querySelector(`[data-id="${card.id}"]`));
+      if(!container) return; let details=container.querySelector('details'); if(details){ details.open=!details.open; return; }
+      details=document.createElement('details'); details.open=true;
       const imgFront = card.front ? `<img src="${card.front}" alt="front" style="width:100%; border-radius:10px">` : '';
-      const imgBack = card.back ? `<img src="${card.back}" alt="back" style="width:100%; border-radius:10px; margin-top:8px">` : '';
-      const info = [`<b>${escapeHtml(card.name||'')}</b>`, escapeHtml(card.company||''), escapeHtml(card.email||''), escapeHtml(card.phone||''), escapeHtml(card.website||'')].filter(Boolean).join(' · ');
-      details.innerHTML = `
-        <summary class="muted">View images & text</summary>
-        <div style="margin-top:10px">${imgFront}${imgBack}</div>
-        <div style="margin-top:8px" class="hint">${info}</div>
-        <div class="ocrtext" style="margin-top:10px">${escapeHtml(card.text)}</div>`;
-      container.appendChild(details);
-      details.scrollIntoView({behavior:'smooth', block:'center'});
+      const imgBack  = card.back  ? `<img src="${card.back}" alt="back"  style="width:100%; border-radius:10px; margin-top:8px">` : '';
+      const info = [card.name, card.company, card.email, card.phone, card.website].filter(Boolean).join(' · ');
+      details.innerHTML = `<summary class="muted">View images & text</summary><div style="margin-top:10px">${imgFront}${imgBack}</div><div class="hint" style="margin-top:8px">${info}</div><div class="ocrtext" style="margin-top:10px">${card.text?card.text.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])):''}</div>`;
+      container.appendChild(details); details.scrollIntoView({behavior:'smooth', block:'center'});
     }
+
+    const pasteModal = byId('pasteModal');
+    byId('btnPaste').addEventListener('click', ()=>{ pasteModal.style.display='flex'; byId('pasteArea').value=''; });
+    byId('btnCancelPaste').addEventListener('click', ()=>{ pasteModal.style.display='none'; });
+    byId('btnUsePaste').addEventListener('click', ()=>{
+      const text = byId('pasteArea').value || '';
+      byId('ocrOut').textContent = text || '(empty)';
+      autoFillFromText(text);
+      byId('btnSave').disabled = text.length === 0;
+      pasteModal.style.display='none';
+    });
 
     renderList();
-
-    if('serviceWorker' in navigator){
-      window.addEventListener('load', ()=>{ navigator.serviceWorker.register('./sw.js').catch(()=>{}); });
-    }
+    if('serviceWorker' in navigator){ window.addEventListener('load', ()=>{ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }); }
   </script>
 </body>
 </html>
