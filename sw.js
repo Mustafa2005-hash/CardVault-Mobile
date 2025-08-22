@@ -1,17 +1,10 @@
-const PRECACHE = 'cv-cache-v3';
-const PRECACHE_URLS = [
-  './',
-  './index.html',
-  './manifest.json',
-  // OCR engine + English language for offline OCR (after first load)
-  'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js',
-  'https://tessdata.projectnaptha.com/5/eng.traineddata.gz'
-];
+const PRECACHE = 'cv-cache-local-v1';
+const PRECACHE_URLS = ['./','./index.html','./manifest.json'];
 
 self.addEventListener('install', (e)=>{
   e.waitUntil((async()=>{
     const cache = await caches.open(PRECACHE);
-    try{ await cache.addAll(PRECACHE_URLS); }catch(e){ /* some CDNs may block addAll; ignore */ }
+    await cache.addAll(PRECACHE_URLS);
   })());
   self.skipWaiting();
 });
@@ -25,16 +18,8 @@ self.addEventListener('activate', (e)=>{
 });
 
 self.addEventListener('fetch', (e)=>{
-  e.respondWith((async()=>{
-    const cached = await caches.match(e.request, {ignoreSearch:true});
-    if(cached) return cached;
-    try{
-      const fresh = await fetch(e.request, {mode:'cors'});
-      const cache = await caches.open(PRECACHE);
-      try{ cache.put(e.request, fresh.clone()); }catch(e){ /* opaque responses can't be cached */ }
-      return fresh;
-    }catch(err){
-      return cached || Response.error();
-    }
-  })());
+  const url = new URL(e.request.url);
+  if (url.origin === location.origin){
+    e.respondWith(caches.match(e.request, {ignoreSearch:true}).then(r => r || fetch(e.request)));
+  }
 });
